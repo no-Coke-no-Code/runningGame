@@ -1,0 +1,522 @@
+// 注意：variables / mixins 已由 vite.config.ts 的 additionalData 自动注入，
+// 此处不再重复 @use（避免重复加载模块导致构建报错）。
+
+/* ============================================
+   波普风字体引入（Google Fonts：Anton / Archivo Black / Poppins）
+   ============================================ */
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Black&family=Poppins:wght@400;500;600;700;800&family=Bungee&family=Permanent+Marker&display=swap');
+
+/* ============================================
+   主题变量 —— 日光模式（默认）—— 波普经典漫画配色
+   ============================================ */
+:root {
+  // 波普原色
+  --pop-blue: #{$pop-blue};
+  --pop-red: #{$pop-red};
+  --pop-yellow: #{$pop-yellow};
+  --pop-magenta: #{$pop-magenta};
+  --pop-cyan: #{$pop-cyan};
+  --pop-cream: #{$pop-cream};
+
+  // 语义色（基于波普调色板重映射）
+  --color-text: #{$color-black};
+  --color-text-gray: #6b6b6b;
+  --color-text-dark: #{$color-black};
+  --color-bg: #{$pop-cream};
+  --color-bg-gray: #f1e6c8;
+  --color-border: #{$color-black};
+  --color-border-field: #{$color-black};
+  --color-surface: #{$color-white};
+  --color-ink: #{$color-black};
+  --header-bg: #{$pop-cream};
+  --toggle-bg: #{$pop-yellow};
+  // 顶/底栏专用配色（日间）：纸白底 + 墨黑描边/文字，靠“白 vs 奶油”的层次与原色撞点
+  // 区分主体，而非用大色块；更具波普漫画格的设计感
+  --bar-bg: #{$color-white};
+  --bar-ink: #{$color-black};
+  --color-button-primary-bg: #{$pop-red};
+  --color-button-primary-text: #{$color-white};
+  --color-button-secondary-bg: #{$pop-yellow};
+  --color-button-secondary-text: #{$color-black};
+
+  // 波普描边 / 硬阴影
+  --border-ink: #{$border-ink};
+  --border-ink-lg: #{$border-ink-lg};
+  --shadow-hard: #{$shadow-hard};
+  --shadow-hard-lg: #{$shadow-hard-lg};
+  --shadow-hard-sm: #{$shadow-hard-sm};
+  --shadow-press: 2px 2px 0 #{$color-black}; // 按下态压缩硬投影
+
+  // 字体栈
+  --font-display: #{$font-display};
+  --font-body: #{$font-family};
+
+  // Element Plus 主题桥接（波普化）
+  --el-color-primary: #{$pop-red};
+  --el-bg-color: #{$color-white};
+  --el-bg-color-page: #{$color-white};
+  --el-text-color-primary: #{$color-black};
+  --el-text-color-regular: #2b2b2b;
+  --el-text-color-secondary: #6b6b6b;
+  --el-border-color: #{$color-black};
+  --el-border-color-light: #{$color-black};
+  --el-fill-color-blank: #{$color-white};
+  --el-fill-color-light: #{$pop-cream};
+}
+
+/* ============================================
+   主题变量 —— 暗夜模式（波普霓虹版）
+   通过 <html class="dark"> 激活
+   ============================================ */
+.dark {
+  --color-text: #fffef7;
+  --color-text-gray: #b8b8c8;
+  --color-text-dark: #fffef7;
+  --color-bg: #14142b;
+  --color-bg-gray: #1f1f3d;
+  --color-border: #fffef7;
+  --color-border-field: #fffef7;
+  --color-surface: #1f1f3d;
+  --color-ink: #fffef7;
+  --header-bg: #14142b;
+  --toggle-bg: transparent;
+  // 顶/底栏夜间：比主体(#14142b)更深一档的近黑底 + 白字，形成层次
+  --bar-bg: #0a0a0a;
+  --bar-ink: #fffef7;
+  --color-button-primary-bg: #{$pop-magenta};
+  --color-button-primary-text: #14142b;
+  --color-button-secondary-bg: #{$pop-cyan};
+  --color-button-secondary-text: #14142b;
+
+  // 暗色硬投影：底已深，白色投影会像高光/描边而不像阴影，不合理。
+  // 改为霓虹品红实色投影，保留波普漫画格的实色偏移特征，并与夜间主按钮呼应。
+  --shadow-hard: 6px 6px 0 rgb(255 0 168 / 0.9);
+  --shadow-hard-lg: 10px 10px 0 rgb(255 0 168 / 0.9);
+  --shadow-hard-sm: 4px 4px 0 rgb(255 0 168 / 0.9);
+  --shadow-press: 2px 2px 0 rgb(255 0 168 / 0.9);
+
+  --el-color-primary: #{$pop-magenta};
+  --el-bg-color: #1f1f3d;
+  --el-bg-color-page: #14142b;
+  --el-text-color-primary: #fffef7;
+  --el-text-color-regular: #d8d8e8;
+  --el-text-color-secondary: #b8b8c8;
+  --el-border-color: #fffef7;
+  --el-border-color-light: #fffef7;
+  --el-fill-color-blank: #1f1f3d;
+  --el-fill-color-light: #14142b;
+  --el-mask-color: rgb(0 0 0 / 70%);
+}
+
+/* ============================================
+   全局基础样式
+   ============================================ */
+
+// 主题切换过渡：统一应用到所有元素的背景色、文字色、边框色，
+// 确保顶部栏 / 内容区 / 卡片 / 页脚同步变化，无割裂感。
+// 放在 * 选择器上，低优先级，不影响组件内 hover 等局部过渡。
+*,
+*::before,
+*::after {
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease,
+    fill 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+// 页面级加载遮罩（page-loading-mask，由 v-page-loading 指令添加）：
+// 仅作动态获取内容时的占位语义，不显示旋转 spinner、背景透明、无淡出过渡，
+// 避免与首屏内容/骨架屏叠加产生闪烁。加载态主要由各页骨架屏（skeleton）表达。
+.el-loading-mask.page-loading-mask {
+  background-color: transparent;
+  transition: none;
+
+  .el-loading-spinner {
+    display: none;
+  }
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  // 波普纸感底纹：极淡半调网点，增强印刷质感
+  background-image: radial-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1.1px);
+  background-size: 14px 14px;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+// 数据大屏等无顶/底栏页面：占满整屏，防止滚动
+.app-shell--chrome-less {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+
+  .app-main {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+.app-main {
+  flex: 1;
+}
+
+/* ---------- 工具类 ---------- */
+.container {
+  @include container;
+}
+
+.section-heading {
+  @include section-heading;
+}
+
+.text-body {
+  @include body-text;
+}
+
+.text-subheading {
+  @include subheading;
+}
+
+/* ============================================
+   波普风通用工具类
+   ============================================ */
+
+// 波普海报标题（Anton 压缩粗体 + 黑描边 + 硬投影）
+.pop-title {
+  font-family: var(--font-display);
+  font-weight: 400; // Anton 自带超粗
+  letter-spacing: 0.01em;
+  line-height: 0.95;
+  text-transform: uppercase;
+  color: var(--color-text);
+  // 卡通描边：用多层 text-shadow 模拟黑边 + 硬投影
+  text-shadow:
+    var(--shadow-hard-sm);
+}
+
+// 波普高亮标签（色块 + 黑边 + 硬阴影），用于 KICK / BADGE
+.pop-chip {
+  display: inline-block;
+  padding: 6px 14px;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  background: var(--pop-yellow);
+  border: var(--border-ink) solid var(--color-ink);
+  box-shadow: var(--shadow-hard-sm);
+  transform: rotate(-2deg);
+}
+
+// 波普图片框（漫画格）：粗黑描边 + 硬投影 + 半调网点蒙版
+.pop-frame {
+  position: relative;
+  border: var(--border-ink-lg) solid var(--color-ink);
+  box-shadow: var(--shadow-hard);
+  background: var(--color-surface);
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    filter: saturate(1.25) contrast(1.08);
+  }
+
+  // 半调网点蒙版（角落叠加，强化丝网印刷感）
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(10, 10, 10, 0.18) 1.4px, transparent 1.5px);
+    background-size: 9px 9px;
+    mix-blend-mode: multiply;
+    opacity: 0.45;
+  }
+}
+
+// 波普色块装饰（圆点 / 星 / 斜条背景）
+.pop-dots {
+  background-image: radial-gradient(var(--color-ink) 2px, transparent 2.1px);
+  background-size: 16px 16px;
+}
+
+.pop-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--pop-magenta) 0,
+    var(--pop-magenta) 10px,
+    var(--color-bg) 10px,
+    var(--color-bg) 20px
+  );
+}
+
+// 波普粗描边卡片：白底 + 黑边 + 硬阴影，hover 位移（按下感）
+.pop-card {
+  background: var(--color-surface);
+  border: var(--border-ink) solid var(--color-ink);
+  box-shadow: var(--shadow-hard);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.3s ease;
+}
+.pop-card:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: var(--shadow-hard-lg);
+}
+
+// 波普按钮（替代 Element Plus 默认风格）：实心色块 + 黑边 + 硬阴影
+.pop-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 28px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  color: var(--color-ink);
+  background: var(--pop-red);
+  border: var(--border-ink) solid var(--color-ink);
+  box-shadow: var(--shadow-hard-sm);
+  cursor: pointer;
+  text-transform: uppercase;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.2s ease;
+
+  &:hover {
+    background: var(--pop-magenta);
+    transform: translate(-2px, -2px);
+    box-shadow: var(--shadow-hard);
+  }
+  &:active {
+    transform: translate(2px, 2px);
+    box-shadow: var(--shadow-press);
+  }
+
+  &.pop-btn--yellow { background: var(--pop-yellow); }
+  &.pop-btn--blue { background: var(--pop-blue); color: #fff; }
+  &.pop-btn--ghost { background: var(--color-surface); }
+}
+
+/* ---------- Element Plus 按钮按波普风覆写（支持主题） ---------- */
+.el-button.btn-primary {
+  --el-button-bg-color: var(--color-button-primary-bg);
+  --el-button-border-color: var(--color-ink);
+  --el-button-text-color: var(--color-button-primary-text);
+  --el-button-hover-bg-color: var(--pop-magenta);
+  --el-button-hover-border-color: var(--color-ink);
+  --el-button-hover-text-color: var(--color-button-primary-text);
+  --el-button-active-bg-color: var(--pop-magenta);
+  border-width: var(--border-ink);
+  border-radius: $radius-md;
+  box-shadow: var(--shadow-hard-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.2s ease;
+}
+.el-button.btn-primary:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow-hard);
+}
+.el-button.btn-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: var(--shadow-press);
+}
+
+.el-button.btn-secondary {
+  --el-button-bg-color: var(--color-button-secondary-bg);
+  --el-button-border-color: var(--color-ink);
+  --el-button-text-color: var(--color-button-secondary-text);
+  --el-button-hover-bg-color: var(--pop-blue);
+  --el-button-hover-border-color: var(--color-ink);
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: var(--pop-blue);
+  border-width: var(--border-ink);
+  border-radius: $radius-md;
+  box-shadow: var(--shadow-hard-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.2s ease;
+}
+.el-button.btn-secondary:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow-hard);
+}
+.el-button.btn-secondary:active {
+  transform: translate(2px, 2px);
+  box-shadow: var(--shadow-press);
+}
+
+.el-button.btn-lg {
+  height: 76px;
+  padding: 20px 32px;
+  font-size: $fs-body-lg;
+  line-height: $lh-body-lg;
+}
+
+.el-button.btn-md {
+  height: 60px;
+  padding: 12px 24px;
+  font-size: $fs-body-lg;
+  line-height: $lh-body-lg;
+}
+
+/* ---------- Element Plus 确认弹窗按波普风覆写（登录守卫） ---------- */
+.el-message-box {
+  --el-messagebox-title-color: var(--color-ink);
+  border: var(--border-ink-lg) solid var(--color-ink);
+  border-radius: $radius-lg;
+  box-shadow: var(--shadow-hard-lg);
+  background: var(--color-surface);
+
+  .el-message-box__title {
+    font-family: var(--font-display);
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+  }
+
+  .el-message-box__content {
+    color: var(--color-text-gray);
+    font-weight: 500;
+  }
+
+  .el-message-box__btns {
+    // 给波普按钮留出硬阴影空间
+    padding-bottom: 4px;
+  }
+
+  // 确认按钮：波普红实心 + 黑边 + 硬阴影
+  .btn-pop-confirm.el-button {
+    --el-button-bg-color: var(--pop-red);
+    --el-button-border-color: var(--color-ink);
+    --el-button-text-color: #fff;
+    --el-button-hover-bg-color: var(--pop-magenta);
+    --el-button-hover-border-color: var(--color-ink);
+    --el-button-hover-text-color: #fff;
+    --el-button-active-bg-color: var(--pop-magenta);
+    border-width: var(--border-ink);
+    border-radius: $radius-md;
+    box-shadow: var(--shadow-hard-sm);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+
+    &:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: var(--shadow-hard);
+    }
+    &:active {
+      transform: translate(2px, 2px);
+      box-shadow: var(--shadow-press);
+    }
+  }
+
+  // 取消按钮：白底 + 黑边
+  .btn-pop-cancel.el-button {
+    --el-button-bg-color: var(--color-surface);
+    --el-button-border-color: var(--color-ink);
+    --el-button-text-color: var(--color-ink);
+    --el-button-hover-bg-color: var(--pop-yellow);
+    --el-button-hover-border-color: var(--color-ink);
+    --el-button-hover-text-color: var(--color-ink);
+    --el-button-active-bg-color: var(--pop-yellow);
+    border-width: var(--border-ink);
+    border-radius: $radius-md;
+    box-shadow: var(--shadow-hard-sm);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+
+    &:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: var(--shadow-hard);
+    }
+    &:active {
+      transform: translate(2px, 2px);
+      box-shadow: var(--shadow-press);
+    }
+  }
+}
+
+/* ---------- Element Plus 下拉菜单按波普风覆写 ---------- */
+// 通过覆盖 Element 的 CSS 变量控制 hover 配色，避免选择器特异性冲突
+.el-dropdown-menu {
+  border: var(--border-ink) solid var(--color-ink);
+  border-radius: $radius-md;
+  box-shadow: var(--shadow-hard);
+  background: var(--color-surface);
+  padding: 4px 0;
+  // 覆盖 Element 的 hover 配色变量（注意变量名需为 kebab-case）
+  --el-dropdown-menu-item-hover-fill: var(--pop-magenta);
+  --el-dropdown-menu-item-hover-color: var(--color-ink);
+
+  .el-dropdown-menu__item {
+    color: var(--color-ink);
+    font-weight: 600;
+    padding: 8px 20px;
+    outline: none;
+
+    // 鼠标点击产生的 focus（非键盘输入）：保持默认外观，避免高亮残留。
+    // 置于 hover 之前，且 hover 与之特异性相当时后加载的 hover 会覆盖它。
+    &:where(:not(.is-disabled)):focus:not(:focus-visible) {
+      background-color: transparent;
+      color: var(--color-ink);
+    }
+
+    // 鼠标 hover：品红高亮（置于 focus 规则之后，保证同时匹配时 hover 优先）
+    &:not(.is-disabled):hover {
+      background-color: var(--pop-magenta);
+      color: var(--color-ink);
+    }
+
+    // disabled 项（如邮箱）：用次要文字色，避免“不可点击”的灰色感
+    &.is-disabled {
+      color: var(--color-text-gray);
+      cursor: default;
+    }
+  }
+}

@@ -1,0 +1,75 @@
+// ============================================
+// 通用 mixin —— 高频复用的样式片段
+// 使用方式：组件内直接 @include flex-center;
+// ============================================
+
+@use 'variables' as *;
+
+// 居中布局
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+// 仅垂直居中
+@mixin flex-center-y {
+  display: flex;
+  align-items: center;
+}
+
+// 容器：限宽 + 居中 + 左右内边距
+@mixin container {
+  width: 100%;
+  max-width: $container-max;
+  margin: 0 auto;
+  padding: 0 $container-padding;
+}
+
+// 文本截断（单行）
+@mixin text-ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+// 多行截断
+@mixin text-clamp($lines: 2) {
+  display: -webkit-box;
+  -webkit-line-clamp: $lines;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+// 区块标题样式（Section heading）—— 波普海报风格
+@mixin section-heading {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: $fs-h2;
+  line-height: 0.98;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+// 副标题样式（Subheading）
+@mixin subheading {
+  font-size: $fs-body-lg;
+  font-weight: $fw-medium;
+  line-height: $lh-body-lg;
+}
+
+// 正文（灰色描述）
+@mixin body-text {
+  font-size: $fs-body-lg;
+  font-weight: $fw-regular;
+  line-height: $lh-body-lg;
+  color: var(--color-text-gray);
+}
+
+// 图片圆角覆盖
+@mixin cover-image($radius: $radius-md) {
+  width: 100%;
+  object-fit: cover;
+  border-radius: $radius;
+  background: var(--color-bg-gray);
+}
