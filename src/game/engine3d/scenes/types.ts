@@ -1,6 +1,14 @@
 import * as THREE from "three";
 
 /**
+ * 是否启用精细的 Mercedes 190E 模型（w201.glb）。
+ * 关闭后：路口停靠车 / 赛道障碍车均改用低模车，且跳过 w201.glb 的加载，
+ * 可减少 draw call、三角面数与内存占用（对 GPU 受限设备提升明显）。
+ * 想恢复时把这里改回 true 即可，其余代码无需改动。
+ */
+export const USE_MERCEDES = false;
+
+/**
  * 场景构建/滚动的共享上下文。
  *
  * 设计约定（为后续「方案 B：面向对象重构」预留）：
@@ -12,6 +20,12 @@ import * as THREE from "three";
 export interface SceneContext {
   /** 主场景（所有物体挂载于此） */
   scene: THREE.Scene;
+  /**
+   * 当前【分块容器】：街头所有物体都挂到它下面，而不是直接挂到 scene。
+   * 这样“移动世界”只需平移这个 Group，也便于整块销毁（分块流式加载的地基）。
+   * 分块后由 StreetScene 管理多块，构建期指向正在生成的那一块。
+   */
+  chunkRoot: THREE.Object3D;
   /** 主题色板（只读） */
   theme: ThemeColors;
   /** 共享工具：加载「一段」砖纹+涂鸦墙贴图 */
@@ -20,6 +34,9 @@ export interface SceneContext {
   loadRoadTexture: () => THREE.Texture;
   /** 人行道贴图（人行道构建与球场通道地砖复用；由 ThreeRunner 在构造时创建） */
   sidewalkTex: THREE.CanvasTexture;
+  /** 主人行道 / 红色路缘石材质（分块后由 rebuildWalkStrips 用它生成每块的条带） */
+  sidewalkMat: THREE.MeshStandardMaterial;
+  curbMat: THREE.MeshStandardMaterial;
   /** 地铁隧道壁贴图（瓷砖墙，从 metroStation.glb 提取；由 ThreeRunner 注入，异步填充 image） */
   metroWallTex: THREE.Texture;
   /** 共享模型资源池（由 loadModels 异步填充，street 场景消费） */
@@ -76,12 +93,22 @@ export interface ModelPool {
   hydrant: THREE.Object3D | null;
   bench: THREE.Object3D | null;
   stop: THREE.Object3D | null;
+  /** 交通信号灯（trafficLight.glb；放在十字路口转角的人行道上） */
+  trafficLight: THREE.Object3D | null;
+  /** 井盖（manholeLid.glb；平贴地面，可出现在赛道或人行道） */
+  manhole: THREE.Object3D | null;
+  /** 垃圾箱（dumpster.glb；背靠墙壁摆放） */
+  dumpster: THREE.Object3D | null;
+  /** 垃圾袋（trashBag.glb；垃圾箱旁固定出现 2 个） */
+  trashBag: THREE.Object3D | null;
   coin: THREE.Object3D | null;
   basketball: THREE.Object3D | null;
 }
 
 /** 街头场景专属状态 */
 export interface StreetState {
+  /** 当前存活的分块（同时最多 2 块：当前 + 下一块） */
+  chunks: StreetChunk[];
   /** 沿街墙（左右各切成多段独立 mesh，每段涂鸦唯一） */
   walls: THREE.Mesh[];
   /** 墙根小巷透视 Group（与墙段一一绑定，存于 wall.userData.alley） */
@@ -106,12 +133,16 @@ export interface StreetState {
   courtWalkways: THREE.Mesh[];
   /** 篮球场 z 区间（供巷口避让） */
   courtZSlots: Array<{ side: number; z0: number; z1: number }>;
-  /** 墙段回绕周期 */
-  wallCycle: number;
-  /** 楼房回绕周期（与墙一致） */
-  buildingCycle: number;
-  /** 楼房回收阈值 */
-  buildingRecycleZ: number;
+  /** 墙段共享的砖纹材质池（墙段回绕时轮换，避免整条街每 220 单位重复一遍） */
+  wallFaceMats: THREE.MeshStandardMaterial[];
+  /** 墙段顶/底/端面共用的纯色材质 */
+  wallEdgeMat: THREE.MeshStandardMaterial | null;
+  /** 十字路口 Group（两侧墙同时断开；与宿主墙段一起滚动，存于 wall.userData.crossroad） */
+  crossroads: THREE.Group[];
+  /** 十字路口【候选】z 区间（初始坐标系；楼/装饰要对所有候选让位） */
+  crossZSlots: Array<{ z0: number; z1: number }>;
+  /** 本圈【已激活】的路口区间（只有这些位置才真的挖掉人行道/路缘石） */
+  crossActive: Array<{ z0: number; z1: number }>;
 }
 
 /** 墙后楼房/球场的数据结构 */
@@ -176,6 +207,22 @@ export interface MetroState {
   platformLength: number;
 }
 
+/**
+ * 街头的一个「分块」（chunk）。
+ *
+ * 分块流式加载的最小单位：一块 = 220 米长的一整段街（墙 / 楼 / 路口 / 球场 /
+ * 街具 / 人行道条带 / 远景）全部挂在自己的 Group 下，坐标用块内局部坐标。
+ * 世界前进 = 平移 Group；整块越过相机后销毁，并在远端新建一块。
+ */
+export interface StreetChunk {
+  /** 块容器：本块所有物体都是它的子节点 */
+  root: THREE.Group;
+  /** 本块登记的行人（销毁时从全局数组里剔除） */
+  peds: THREE.Object3D[];
+  /** 本块登记的骨骼动画混合器（销毁时停止并剔除） */
+  mixers: THREE.AnimationMixer[];
+}
+
 /** 街头场景常量 */
 export const STREET = {
   /** 墙长（世界单位） */
@@ -217,6 +264,8 @@ export interface SceneDeps {
   loadWallTexture: LoadWallTexture;
   loadRoadTexture: () => THREE.Texture;
   sidewalkTex: THREE.CanvasTexture;
+  sidewalkMat: THREE.MeshStandardMaterial;
+  curbMat: THREE.MeshStandardMaterial;
   /** 地铁隧道壁贴图（瓷砖墙，异步填充 image） */
   metroWallTex: THREE.Texture;
   /**
@@ -235,6 +284,7 @@ export interface SceneDeps {
  * 它不会被真正使用，只是一份惰性空壳，避免跨场景误访问时报错。
  */
 export const emptyStreetState: StreetState = {
+  chunks: [],
   walls: [],
   alleyways: [],
   cityDecor: [],
@@ -247,9 +297,11 @@ export const emptyStreetState: StreetState = {
   courtWraps: [],
   courtWalkways: [],
   courtZSlots: [],
-  wallCycle: 0,
-  buildingCycle: 0,
-  buildingRecycleZ: 42,
+  wallFaceMats: [],
+  wallEdgeMat: null,
+  crossroads: [],
+  crossZSlots: [],
+  crossActive: [],
 };
 
 /**

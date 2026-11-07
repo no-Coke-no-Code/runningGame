@@ -20,7 +20,7 @@ import {
 import { MetroScene } from "./scenes/metroScene";
 import { StreetScene } from "./scenes/streetScene";
 import {
-  STREET,
+  USE_MERCEDES,
   type MetroState,
   type SceneDeps,
   type StreetState,
@@ -115,9 +115,9 @@ export class ThreeRunner {
   private worldGroup: THREE.Group;
   private ground!: THREE.Mesh;
   private groundTex!: THREE.Texture;
-  private sidewalks: THREE.Mesh[] = []; // 两侧人行道
-  private curbs: THREE.Mesh[] = []; // 红色路缘石
   private sidewalkTex!: THREE.CanvasTexture;
+  private sidewalkMat!: THREE.MeshStandardMaterial;
+  private curbMat!: THREE.MeshStandardMaterial;
   // ==================== 场景对象（方案 B） ====================
   // 街头/地铁各自封装为一个场景对象，持有本方状态并提供 build/scroll/setVisible。
   // 通过 getter 暴露状态字段，使既有 `this.street.xxx` / `this.metro.xxx` 访问保持不变。
@@ -142,6 +142,8 @@ export class ThreeRunner {
   private particleSys: THREE.Points;
   private particleData: { life: number; vx: number; vy: number; vz: number }[] =
     [];
+  /** 是否有活跃粒子：没有时 updateParticles 直接跳过，省掉每帧 360 次空转 */
+  private particlesAlive = false;
   private speedLines: THREE.Mesh[] = []; // 速度线（沿视野飞过，强化速度感）
 
   // ==================== 街头装饰与预加载模型池 ====================
@@ -157,6 +159,10 @@ export class ThreeRunner {
   private hydrantModel: THREE.Object3D | null = null; // 预加载的消防栓模型（fireHydrant.glb）
   private benchModel: THREE.Object3D | null = null; // 预加载的长椅模型（bench.glb）
   private stopModel: THREE.Object3D | null = null; // 预加载的 STOP 标识牌模型（stopSign.glb）
+  private trafficLightModel: THREE.Object3D | null = null; // 交通信号灯（trafficLight.glb）
+  private manholeModel: THREE.Object3D | null = null; // 井盖（manholeLid.glb）
+  private dumpsterModel: THREE.Object3D | null = null; // 垃圾箱（dumpster.glb）
+  private trashBagModel: THREE.Object3D | null = null; // 垃圾袋（trashBag.glb）
   private basketballModel: THREE.Object3D | null = null; // 预加载的篮球场模型（basketballCourt.glb）
 
   // ==================== 游戏状态：计分 / 生成节奏 / 道具计时 ====================
@@ -271,31 +277,20 @@ export class ThreeRunner {
     this.ground.receiveShadow = true;
     this.scene.add(this.ground);
 
-    // 两侧人行道 + 红色路缘石（街头模式）
+    // 人行道 / 路缘石材质（街头模式）。
+    // 分块后，人行道 / 路缘石条带由每个块在 rebuildWalkStrips 里用这两份材质各自生成，
+    // 全局 220 长的整体网格已废弃删除。
     this.sidewalkTex = makeSidewalkTexture("#d8c8b0");
-    const swGeo = new THREE.PlaneGeometry(3.5, 220);
     const swMat = new THREE.MeshStandardMaterial({
       map: this.sidewalkTex,
       roughness: 0.95,
     });
-    const curbGeo = new THREE.BoxGeometry(0.22, 0.12, 220);
     const curbMat = new THREE.MeshStandardMaterial({
       color: theme.red,
       roughness: 0.7,
     });
-    for (const side of [-1, 1]) {
-      const sw = new THREE.Mesh(swGeo, swMat);
-      sw.rotation.x = -Math.PI / 2;
-      sw.position.set(side * 8.75, 0.035, -70);
-      sw.receiveShadow = true;
-      this.scene.add(sw);
-      this.sidewalks.push(sw);
-      const curb = new THREE.Mesh(curbGeo, curbMat);
-      curb.position.set(side * 7.0, 0.06, -70);
-      curb.receiveShadow = true;
-      this.scene.add(curb);
-      this.curbs.push(curb);
-    }
+    this.sidewalkMat = swMat;
+    this.curbMat = curbMat;
 
     // 创建两个场景对象（此刻 scene / theme / sidewalkTex 均已就绪）。
     // 它们各自持有本方状态，后续构建/滚动/显隐都通过实例调用。
@@ -305,6 +300,8 @@ export class ThreeRunner {
       loadWallTexture: this.loadWallTexture.bind(this),
       loadRoadTexture: this.loadRoadTexture.bind(this),
       sidewalkTex: this.sidewalkTex,
+      sidewalkMat: this.sidewalkMat,
+      curbMat: this.curbMat,
       // 地铁隧道壁瓷砖贴图（从 metroStation.glb 提取，随构建打包；异步填充 image）
       metroWallTex: loadMetroWallTextureImpl(),
       // 以访问器形式提供模型池：单个模型字段在异步加载完成后才被赋值，
@@ -321,6 +318,10 @@ export class ThreeRunner {
         hydrant: this.hydrantModel,
         bench: this.benchModel,
         stop: this.stopModel,
+        trafficLight: this.trafficLightModel,
+        manhole: this.manholeModel,
+        dumpster: this.dumpsterModel,
+        trashBag: this.trashBagModel,
         coin: this.coinModel,
         basketball: this.basketballModel,
       }),
@@ -467,10 +468,54 @@ export class ThreeRunner {
     this.hydrantModel = result.hydrantModel;
     this.benchModel = result.benchModel;
     this.stopModel = result.stopModel;
+    this.trafficLightModel = result.trafficLightModel;
+    this.manholeModel = result.manholeModel;
+    this.dumpsterModel = result.dumpsterModel;
+    this.trashBagModel = result.trashBagModel;
     this.coinModel = result.coinModel;
     this.basketballModel = result.basketballModel;
     this.playerModel = result.playerModel;
     this.playerAnims = result.playerAnims;
+
+    // 关键：模型到齐后，把开局预铺阶段用「程序化占位几何」生成的障碍/金币换成真实模型。
+    // 否则玩家刷新后立刻开跑，近端那一段会永远是小方块（路肩/金币不像正常模型）。
+    this.refreshFallbackProps();
+
+    // 模型池里的几何 / 材质是【跨块共享】的（每块只是 clone 一份对象）。
+    // 这里统一打个标记：分块销毁时只释放「块自己创建」的几何，
+    // 绝不会把共享的 GLB 几何一起 dispose 掉（那会让其它块/玩家模型变黑）。
+    const tagShared = (o: unknown) => {
+      if (!o || typeof o !== "object") return;
+      const obj = o as THREE.Object3D;
+      if ((obj as THREE.Mesh).isMesh) {
+        const geo = (obj as THREE.Mesh).geometry;
+        if (geo) geo.userData.shared = true;
+      }
+      const kids = (obj as THREE.Object3D).children;
+      if (kids) for (const k of kids) tagShared(k);
+    };
+    for (const m of [
+      ...this.buildingModels,
+      ...this.carModels,
+      ...this.barrierModels,
+      ...this.pedModels,
+      this.mercedesModel,
+      this.bmxModel,
+      this.palmModel,
+      this.streetLightModel,
+      this.hydrantModel,
+      this.benchModel,
+      this.stopModel,
+      this.trafficLightModel,
+      this.manholeModel,
+      this.dumpsterModel,
+      this.trashBagModel,
+      this.coinModel,
+      this.basketballModel,
+      this.playerModel,
+    ]) {
+      tagShared(m);
+    }
 
     // 街头内容构建（顺序与容错封装在 StreetScene.build 内部）：
     //   先楼房 → 再路边装饰 → 巷口 → 清理巷口装饰。
@@ -1010,15 +1055,125 @@ export class ThreeRunner {
     return g;
   }
 
+  /**
+   * 模型异步加载完成后，把「开局预铺时因模型未就绪而用程序化几何顶替」的
+   * 障碍物 / 金币就地替换成真实模型。
+   *
+   * 触发场景：玩家刷新页面后立刻开跑，此时 openingRun() 已经用占位几何
+   * 铺满了近端赛道；等 GLB 到达，若不替换，那一段就永远是小方块/八面体。
+   */
+  private refreshFallbackProps() {
+    // ---- 障碍物 ----
+    for (const o of this.obstacles) {
+      if (!o.mesh.userData.fallbackMesh) continue;
+      if (!this.hasObstacleModel(o.kind)) continue; // 模型加载失败：保留占位
+      const fresh = this.makeObstacle(o.kind, o.lane);
+      if (fresh.mesh.userData.fallbackMesh) continue;
+      // 继承原位置与状态（含被撞后横向甩出的位移/旋转）
+      fresh.mesh.position.x = o.mesh.position.x;
+      fresh.mesh.position.z = o.z;
+      fresh.mesh.rotation.y = o.mesh.rotation.y;
+      fresh.z = o.z;
+      fresh.topY = o.topY;
+      fresh.halfZ = o.halfZ;
+      fresh.knockDir = o.knockDir;
+      this.worldGroup.remove(o.mesh);
+      this.worldGroup.add(fresh.mesh);
+      o.mesh = fresh.mesh;
+    }
+    // ---- 金币 ----
+    for (const p of this.pickups) {
+      if (p.taken || !p.mesh.userData.fallbackMesh) continue;
+      if (!this.coinModel) continue;
+      const y = p.mesh.position.y;
+      const fresh = this.makePickup(p.lane, p.z, y);
+      if (fresh.mesh.userData.fallbackMesh) continue;
+      this.worldGroup.remove(p.mesh);
+      p.mesh = fresh.mesh;
+      this.worldGroup.add(p.mesh);
+    }
+  }
+
+  /**
+   * 楼型轮换：把「刚回绕到远端」的这栋楼与同侧、进深接近的另一栋交换模型。
+   *
+   * 不克隆、不新分配内存 —— 只把两栋楼的 mesh 对象互换，各自带着自己的
+   * position/scale 与 offZ（模型中心相对逻辑 z 的偏移），因此交换后仍然
+   * 精确落在各自槽位的 z 上；限制进深差 ≤1.2，避免新模型压到邻居。
+   */
+  private swapBuildingModel(b: {
+    mesh: THREE.Object3D;
+    z: number;
+    halfD?: number;
+    offZ?: number;
+    isCourt?: boolean;
+  }) {
+    const list = this.street.buildings as unknown as Array<typeof b>;
+    const side = Math.sign(b.mesh.position.x);
+    const partners = list.filter(
+      (o) =>
+        o !== b &&
+        !o.isCourt &&
+        Math.sign(o.mesh.position.x) === side &&
+        Math.abs((o.halfD ?? 6) - (b.halfD ?? 6)) < 1.2
+    );
+    if (partners.length === 0) return;
+    const p = partners[Math.floor(Math.random() * partners.length)];
+    const mesh = b.mesh;
+    const offZ = b.offZ;
+    b.mesh = p.mesh;
+    b.offZ = p.offZ;
+    p.mesh = mesh;
+    p.offZ = offZ;
+    // 立刻按各自槽位重新对齐 z，避免这一帧出现错位
+    b.mesh.position.z = b.z - (b.offZ ?? 0);
+    p.mesh.position.z = p.z - (p.offZ ?? 0);
+  }
+
+  /**
+   * 楼房回绕到相机后方时，重新抽一个高度。
+   *
+   * 只缩放 y 轴：x/z 占地不变，不会破坏 buildingCycle/防重叠的布局；
+   * 但缩放以模型原点为中心，直接改会让楼浮空或陷进地面，所以缩放后
+   * 重新算一次世界包围盒、把底面压回 y=0。
+   * 基准取构建时存下的 userData.baseScale，等价于重跑一次构建期的随机高度。
+   */
+  private restyleBuilding(mesh: THREE.Object3D) {
+    const base = mesh.userData.baseScale as number | undefined;
+    if (!base) return;
+    mesh.scale.y = base * (1.15 + Math.random() * 0.5);
+    mesh.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    mesh.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.geometry) {
+        if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+        box.union(m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld));
+      }
+    });
+    if (!box.isEmpty()) mesh.position.y -= box.min.y;
+  }
+
+  /** 该类障碍当前是否已有真实模型可用（否则 makeObstacle 会退化成程序化几何） */
+  private hasObstacleModel(kind: Obstacle["kind"]): boolean {
+    if (kind === "car") {
+      return this.carModels.length > 0 || !!this.mercedesModel;
+    }
+    return this.barrierModels.length > 0;
+  }
+
   private makeObstacle(kind: Obstacle["kind"], lane: number): Obstacle {
     const group = new THREE.Group();
+    // 标记「这条障碍是用程序化几何顶替的」：模型异步加载完成后，
+    // loadModels 会调用 refreshFallbackProps() 把这些换回真实模型。
+    group.userData.fallbackMesh = !this.hasObstacleModel(kind);
     const ink = this.theme.ink;
     // 停/坏在赛道上的车辆：复用已加载的车辆模型（精细 Mercedes 概率更高，其余随机低模车）。
     // 车比路障长得多：判定半长单独给（halfZ），否则用路障的 1.0 窗口会在车头刚贴到
     // 人物时还没判定、等人跑到车身中间才触发，视觉上就是"穿过车头"。
     if (kind === "car") {
       const src =
-        this.mercedesModel && Math.random() < 0.35
+        USE_MERCEDES && this.mercedesModel && Math.random() < 0.35
           ? this.mercedesModel
           : this.carModels.length > 0
           ? this.carModels[Math.floor(Math.random() * this.carModels.length)]
@@ -1256,6 +1411,8 @@ export class ThreeRunner {
     );
     addOutline(mesh, this.theme.ink);
     mesh.position.set(LANES[lane], y, z);
+    // 同理：金币模型未就绪时用的是程序化八面体，标记后由 loadModels 换回
+    mesh.userData.fallbackMesh = true;
     return { mesh, lane, z, taken: false };
   }
 
@@ -1266,7 +1423,9 @@ export class ThreeRunner {
     // 云层亮度随天色调整（夜跑不应该有扎眼的白云）
     this.cloudDim = ThreeRunner.cloudDimFor(theme.sky);
     // 天空平板贴图按新主题重绘（渐变/云/地平线都取自天空色，不重绘会残留旧主题天色）
-    const skyMat = this.skyPlane?.material as THREE.MeshBasicMaterial | undefined;
+    const skyMat = this.skyPlane?.material as
+      | THREE.MeshBasicMaterial
+      | undefined;
     if (skyMat) {
       skyMat.map?.dispose();
       const tex = makeSkyTexture(theme.sky, theme.fog);
@@ -1317,8 +1476,6 @@ export class ThreeRunner {
     });
     // 街头 / 地铁场景各物体显隐（各自封装在场景对象内部）
     this.streetSceneObj.setVisible(!isMetro);
-    this.sidewalks.forEach((s) => (s.visible = !isMetro));
-    this.curbs.forEach((c) => (c.visible = !isMetro));
     this.metroSceneObj.setVisible(isMetro);
     this.skyPlane.visible = !isMetro; // 地铁内不显示天空
     for (const c of this.clouds) c.mesh.visible = !isMetro; // 云层与天空同步显隐
@@ -1369,7 +1526,7 @@ export class ThreeRunner {
     this.pickups = [];
     this.powerups = [];
     this.spawnAcc = 0;
-    this.nextGap = 18;
+    this.nextGap = 22;
     this.powerupAcc = 0;
     this.nextPowerupGap = 22;
     // 清除在场列车并重新计时（列车挂在 scene 而非 worldGroup，需单独回收）
@@ -1400,6 +1557,7 @@ export class ThreeRunner {
     this.stats.speed = START_SPEED;
     this.camShake = 0;
     this.particleData = [];
+    this.particlesAlive = false;
     const pos = this.particleSys.geometry.getAttribute(
       "position"
     ) as THREE.BufferAttribute;
@@ -1464,14 +1622,6 @@ export class ThreeRunner {
     if (this.playing) {
       this.update(dt);
       this.renderer.render(this.scene, this.camera);
-    } else {
-      // 未开始游戏（ready/over/paused）时，场景是静止的：
-      // 只在模型异步加载完成后的首帧渲染一次，之后停手，避免每帧重渲染
-      // 整个城市场景 + 2048² 阴影贴图造成的空转卡顿（这正是刷新后偶发卡顿的主因）。
-      if (!this.idleRendered) {
-        this.renderer.render(this.scene, this.camera);
-        this.idleRendered = true;
-      }
     }
     this.raf = requestAnimationFrame(this.loop);
   };
@@ -1503,7 +1653,8 @@ export class ThreeRunner {
     // 地面纹理滚动：系数 = repeat.v / 平面长度，确保纹理滑动速度与物体一致（贴地感）
     const texPerUnit = this.groundTex.repeat.y / 220;
     this.groundTex.offset.y += move * texPerUnit;
-    this.sidewalkTex.offset.y += move * (22 / 220);
+    // 人行道不再滚动贴图：它的几何由 streetScene 按路口位置重建（带缺口），
+    // 由 streetScene.scroll 直接平移网格并在 220 处回绕，UV 已按世界 z 烘焙。
     // 天空云层：随跑动做慢速视差滚动（速度越快，云后退越明显）
     this.updateClouds(move);
     // 道床碎石纹理滚动：与地面同法（系数 = repeat.v / 道床长度），使两侧碎石随人物跑动流动
@@ -1598,11 +1749,6 @@ export class ThreeRunner {
     this.obstacles.forEach((o) => {
       o.z += move;
       o.mesh.position.z = o.z;
-      // 被撞过的车辆：横向甩出车道并带一点甩尾旋转（车辆不能像路锥那样凭空消失）
-      if (o.knockDir) {
-        o.mesh.position.x += o.knockDir * dt * 8;
-        o.mesh.rotation.y += o.knockDir * dt * 2.5;
-      }
     });
     this.pickups.forEach((p) => {
       p.z += move;
@@ -1642,11 +1788,11 @@ export class ThreeRunner {
     (this.playerShadow.material as THREE.MeshBasicMaterial).opacity =
       0.28 * shScale;
 
-    // 生成
+    // 生成（间距比之前放大：16~28 米，降低同屏障碍数量与 draw call）
     this.spawnAcc += move;
     if (this.spawnAcc >= this.nextGap) {
       this.spawnAcc = 0;
-      this.nextGap = 11 + Math.random() * 9;
+      this.nextGap = 16 + Math.random() * 12;
       this.spawnWave();
     }
     // 道具低频独立生成（与障碍节奏解耦，避免过密）
@@ -1685,32 +1831,11 @@ export class ThreeRunner {
     this.handleCollisions();
     this.updateParticles(dt);
     this.updateSpeedLines(dt, move);
-    // 街头装饰：动态回收 + 远端持续补充新随机装饰（绝不重复固定组合）
-    this.streetSceneObj.recycleDecor(move);
-    // 楼房滚动与墙同周期(wallCycle)，保持与墙段网格对齐。
-    // 滚动/回绕必须基于「逻辑 z」(b.z)——防重叠(courtZSlots/链式 minGap)所用的坐标系；
-    // 视觉位置用恒等式 mesh.z = z − offZ 同步，回绕间隔才能精确保持初始防重叠间隔。
-    if (this.street.buildings[0]?.mesh.visible) {
-      const camZ = this.camera.position.z; // 相机固定在 PLAYER_Z+8≈12
-      for (const b of this.street.buildings) {
-        b.z += move;
-        if (b.z - STREET.wallSegLen / 2 > this.street.buildingRecycleZ) {
-          b.z -= this.street.buildingCycle;
-        }
-        b.mesh.position.z = b.z - (b.offZ ?? 0); // 视觉位置恒等于逻辑 z，与防重叠坐标严格一致
-        // 远端性能优化：物体离相机超过约 80 单位(已沉入 fog 远端)时关闭阴影投射，
-        // 进入约 70 单位内再开启，滞回避免边界抖动。远处本就被雾盖住看不清影子，关掉省 GPU。
-        const dist = camZ - b.z;
-        const wantShadow = dist < 75;
-        if (!!b.castShadow !== wantShadow) {
-          b.castShadow = wantShadow;
-          b.mesh.traverse((o) => {
-            const m = o as THREE.Mesh;
-            if (m.isMesh) m.castShadow = wantShadow;
-          });
-        }
-      }
-    }
+    // 分块流式之后：
+    //  · 楼房、装饰、墙体、远景都不再逐物体平移/回绕 —— 它们跟着各自的块容器走
+    //    （见 StreetScene.scroll）；
+    //  · 装饰也不再“动态回收”，每块在生成时就一次性铺好，随块销毁。
+    // 这里只保留与分块无关的全局更新（速度线、相机等）。
 
     // 相机随速度拉伸 + 高速抖动 + 冲击恢复（强化速度感）
     const speedRatio = this.stats.speed / MAX_SPEED;
@@ -1762,7 +1887,8 @@ export class ThreeRunner {
     const lanes = allLanes
       .filter((l) => l !== trainLane)
       .sort(() => Math.random() - 0.5);
-    const obstacleCount = 1 + (Math.random() < 0.45 ? 1 : 0);
+    // 双障碍概率 45% → 30%：多数波次只放 1 个障碍，减少同屏物体数量。
+    const obstacleCount = 1 + (Math.random() < 0.3 ? 1 : 0);
     for (let i = 0; i < obstacleCount && i < lanes.length; i++) {
       const lane = lanes[i];
       // 障碍种类：街头模式约 20% 是「停在车道上的车」（体型大、必须换道或起跳），
@@ -1779,7 +1905,8 @@ export class ThreeRunner {
       this.obstacles.push(o);
     }
     // 空闲车道：优先在非列车赛道中选（列车赛道不铺金币，保持净空）
-    const freeLane = lanes[obstacleCount] ?? lanes[0] ?? (trainLane === 1 ? 0 : 1);
+    const freeLane =
+      lanes[obstacleCount] ?? lanes[0] ?? (trainLane === 1 ? 0 : 1);
     const n = 3 + Math.floor(Math.random() * 3);
     for (let i = 0; i < n; i++) {
       // 低空（地面可取）与高空（需起跳）混排，让跳跃更有意义
@@ -1800,7 +1927,8 @@ export class ThreeRunner {
     let z = START_Z;
     while (z > SPAWN_AHEAD) {
       const lanes = [0, 1, 2].sort(() => Math.random() - 0.5);
-      const obstacleCount = 1 + (Math.random() < 0.4 ? 1 : 0);
+      // 双障碍概率 40% → 25%，开局也放宽间距，减少同屏物体。
+      const obstacleCount = 1 + (Math.random() < 0.25 ? 1 : 0);
       for (let i = 0; i < obstacleCount; i++) {
         const lane = lanes[i];
         // 开局这段车少一些（0.12），先让玩家熟悉路锥/消防栓的节奏
@@ -1826,14 +1954,14 @@ export class ThreeRunner {
         this.worldGroup.add(p.mesh);
         this.pickups.push(p);
       }
-      // 波次间隔：近端密（≈14）→ 远端疏（≈22），自然过渡到常规节奏（11~20）。
+      // 波次间隔：近端密（≈18）→ 远端疏（≈26），自然过渡到常规节奏（16~28）。
       const t = (START_Z - z) / (START_Z - SPAWN_AHEAD); // 0=最近 → 1=最远
-      z -= 14 + t * 8 + Math.random() * 6;
+      z -= 18 + t * 8 + Math.random() * 6;
     }
     // 预铺已铺满到远端生成点，重置累加器，使常规生成接着当前进度走，
     // 而不是立刻再刷一波造成开局过密。
     this.spawnAcc = 0;
-    this.nextGap = 11 + Math.random() * 9;
+    this.nextGap = 16 + Math.random() * 12;
   }
 
   // 在随机一条跑道上生成一个道具（磁铁/护盾/无敌之躯），低频出现
@@ -2042,7 +2170,6 @@ export class ThreeRunner {
     }
     for (const o of this.obstacles) {
       if (o.lane !== this.playerLane) continue;
-      if (o.knockDir) continue; // 已被撞飞的车辆不再重复判定
       // 判定窗口按障碍自身沿 z 的半长算：车辆 4.4 长，若仍用路障的 1.0 窗口，
       // 车头贴到人物身上时还没判定，要等人跑到车身中间才触发——看起来像穿模。
       // 路障缺省 halfZ=0.5，等价于原来的 |Δz| < 1.0 窗口，不改变既有手感。
@@ -2050,9 +2177,11 @@ export class ThreeRunner {
       if (Math.abs(o.z - PLAYER_Z) > reach) continue;
       if (this.playerY >= o.topY - 0.1) continue; // 脚底高于障碍顶 = 跳过去了
       if (o.kind === "car") {
-        // 车辆不消失：给一个横向甩出车道的方向，车身继续随世界滚动离开画面。
-        // （碰撞死亡机制当前关闭；将来开启时，这里替换为 this.gameOver() 即可）
-        o.knockDir = this.player.position.x > o.mesh.position.x ? 1 : -1;
+        // 撞车不再播放「横向甩出 + 甩尾旋转」的额外动画：直接把车交给回收
+        //（下一帧移除），省掉撞后车继续留在场景里渲染、以及每帧位移/旋转的开销。
+        // 碰撞死亡机制当前关闭；将来开启时，这里替换为 this.gameOver() 即可。
+        this.worldGroup.remove(o.mesh);
+        o.z = DESPAWN_BEHIND + 999;
         this.camShake = Math.max(this.camShake, 0.55);
         this.onEvent?.("crash");
       } else {
@@ -2134,14 +2263,18 @@ export class ThreeRunner {
       spawned++;
     }
     pos.needsUpdate = true;
+    this.particlesAlive = true;
     (this.particleSys.material as THREE.PointsMaterial).color.set(color);
   }
 
   private updateParticles(dt: number) {
+    // 没有活跃粒子时直接跳过：省掉每帧对 360 个粒子槽的空转遍历。
+    if (!this.particlesAlive) return;
     const pos = this.particleSys.geometry.getAttribute(
       "position"
     ) as THREE.BufferAttribute;
     let dirty = false;
+    let alive = false;
     for (let i = 0; i < pos.count; i++) {
       const d = this.particleData[i];
       if (!d || d.life <= 0) continue;
@@ -2151,10 +2284,14 @@ export class ThreeRunner {
       const y = pos.getY(i) + d.vy * dt;
       const z = pos.getZ(i) + d.vz * dt;
       if (d.life <= 0) pos.setXYZ(i, 0, -999, 0);
-      else pos.setXYZ(i, x, y, z);
+      else {
+        pos.setXYZ(i, x, y, z);
+        alive = true;
+      }
       dirty = true;
     }
     if (dirty) pos.needsUpdate = true;
+    if (!alive) this.particlesAlive = false;
   }
 
   private gameOver() {

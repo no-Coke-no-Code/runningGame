@@ -10,6 +10,7 @@ import {
   applyGraffitiToWall,
   makeSeamlessTexture,
 } from "./textures";
+import { USE_MERCEDES } from "./scenes/types";
 
 /**
  * 加载用户提供的墙面贴图并生成「一段」墙的纹理：会把砖纹重绘到指定尺寸的小 canvas，
@@ -140,6 +141,14 @@ export interface LoadResult {
   hydrantModel: THREE.Object3D | null;
   benchModel: THREE.Object3D | null;
   stopModel: THREE.Object3D | null;
+  /** 交通信号灯（trafficLight.glb） */
+  trafficLightModel: THREE.Object3D | null;
+  /** 井盖（manholeLid.glb；平贴地面，可出现在赛道或人行道） */
+  manholeModel: THREE.Object3D | null;
+  /** 垃圾箱（dumpster.glb；背靠墙壁摆放） */
+  dumpsterModel: THREE.Object3D | null;
+  /** 垃圾袋（trashBag.glb；垃圾箱旁固定出现 2 个） */
+  trashBagModel: THREE.Object3D | null;
   coinModel: THREE.Object3D | null;
   basketballModel: THREE.Object3D | null;
   playerModel: THREE.Object3D | null;
@@ -232,6 +241,10 @@ export async function loadModels(
     hydrantModel: null,
     benchModel: null,
     stopModel: null,
+    trafficLightModel: null,
+    manholeModel: null,
+    dumpsterModel: null,
+    trashBagModel: null,
     coinModel: null,
     basketballModel: null,
     playerModel: null,
@@ -247,7 +260,6 @@ export async function loadModels(
       "three/examples/jsm/loaders/MTLLoader.js"
     );
     // 各车型目录与文件名（注意大小写，HTTP 路径区分大小写）
-    // targetLen：缩放目标车长；kind："car" 进 carModels，"bmx" 单独存 bmxModel（尺寸小）
     // targetLen：缩放目标车长；kind："car" 进 carModels，"bmx" 单独存 bmxModel（尺寸小）
     const defs = [
       {
@@ -426,6 +438,41 @@ export async function loadModels(
         kind: "stop" as const,
       },
       {
+        folder: "models/street/props/trafficLight",
+        obj: "",
+        mtl: "",
+        glb: "trafficLight.glb",
+        targetLen: 3.4, // 交通信号灯（含立杆）约 3.4m 高
+        kind: "trafficlight" as const,
+      },
+      {
+        // 井盖：平贴地面的圆盘，按水平直径缩放（走“水平”分支）
+        folder: "models/street/props/manholeLid",
+        obj: "",
+        mtl: "",
+        glb: "manholeLid.glb",
+        targetLen: 1.15, // 井盖直径约 1.15m（比常见井盖略大，跑动中更易看见）
+        kind: "manhole" as const,
+      },
+      {
+        // 垃圾箱：背靠墙壁摆放（竖直物体，按高度缩放）
+        folder: "models/street/props/dumpster",
+        obj: "",
+        mtl: "",
+        glb: "dumpster.glb",
+        targetLen: 1.4, // 垃圾箱高约 1.4m
+        kind: "dumpster" as const,
+      },
+      {
+        // 垃圾袋：垃圾箱旁固定出现 2 个（竖直物体，按高度缩放）
+        folder: "models/street/props/trashBag",
+        obj: "",
+        mtl: "",
+        glb: "trashBag.glb",
+        targetLen: 0.75, // 垃圾袋高约 0.75m
+        kind: "trashbag" as const,
+      },
+      {
         folder: "models/street/court/basketballCourt",
         obj: "",
         mtl: "",
@@ -433,7 +480,7 @@ export async function loadModels(
         targetLen: 28, // 篮球场沿马路方向(z)长度基准；高度在 buildBuildings 中压到围墙高
         kind: "basketball" as const,
       },
-    ];
+    ].filter((d) => USE_MERCEDES || d.kind !== "mercedes"); // 关闭开关时跳过 w201.glb 的加载
     const loadOne = async (d: (typeof defs)[number]) => {
       const base = `/${d.folder}/`;
       let obj: THREE.Object3D;
@@ -479,7 +526,24 @@ export async function loadModels(
       };
       const rawSize = new THREE.Vector3();
       calcMeshBox(obj).getSize(rawSize);
-      if (
+      if (d.kind === "manhole") {
+        // 井盖：平贴地面的圆盘。若模型是立着建的（最长轴为 y），先绕 X 转平；
+        // 再按水平最大尺寸缩放到 targetLen（直径），最后水平居中、底部贴地。
+        if (rawSize.y > Math.max(rawSize.x, rawSize.z)) {
+          obj.rotation.x = -Math.PI / 2;
+        }
+        const flatSize = new THREE.Vector3();
+        calcMeshBox(obj).getSize(flatSize);
+        const dia = Math.max(flatSize.x, flatSize.z);
+        const s = dia > 0 ? d.targetLen / dia : 1;
+        obj.scale.setScalar(s);
+        const b2 = calcMeshBox(obj);
+        const c2 = new THREE.Vector3();
+        b2.getCenter(c2);
+        obj.position.x -= c2.x;
+        obj.position.z -= c2.z;
+        obj.position.y -= b2.min.y;
+      } else if (
         d.kind === "palm" ||
         d.kind === "streetlight" ||
         d.kind === "barrier" ||
@@ -487,7 +551,10 @@ export async function loadModels(
         d.kind === "coin" ||
         d.kind === "building" ||
         d.kind === "hydrant" ||
-        d.kind === "stop"
+        d.kind === "stop" ||
+        d.kind === "trafficlight" ||
+        d.kind === "dumpster" ||
+        d.kind === "trashbag"
       ) {
         // 竖直物体（树/路灯）：保持竖直，按高度(y)缩放到 targetLen，底部贴地、水平居中
         const targetH = d.targetLen;
@@ -568,6 +635,7 @@ export async function loadModels(
         else if (kind === "hydrant") result.hydrantModel = res.value;
         else if (kind === "bench") result.benchModel = res.value;
         else if (kind === "stop") result.stopModel = res.value;
+        else if (kind === "trafficlight") result.trafficLightModel = res.value;
         else if (kind === "basketball") {
           // 修复球场线条层白块：Markngs 层 UV 退化为常量 (0,0)（建模导出缺陷），
           // 整面只采样贴图左上角纯白像素 → 线区显示为白块。按包围盒重建 UV 即可。
@@ -575,9 +643,19 @@ export async function loadModels(
           result.basketballModel = res.value;
         } else if (kind === "building") result.buildingModels.push(res.value);
         else if (kind === "mercedes") result.mercedesModel = res.value;
+        else if (kind === "manhole") result.manholeModel = res.value;
+        else if (kind === "dumpster") result.dumpsterModel = res.value;
+        else if (kind === "trashbag") result.trashBagModel = res.value;
         else result.carModels.push(res.value);
+      } else {
+        // 单个模型加载失败仅跳过、不阻断其余构建；这里打印出来便于排查路径/文件名。
+        console.warn(
+          `[street] 模型加载失败（kind=${defs[k].kind}, glb=${
+            defs[k].glb || defs[k].obj
+          }）:`,
+          res.reason
+        );
       }
-      // 单个模型加载失败仅跳过，不阻断其余装饰构建
     }
     // 加载精致角色模型（character.glb，含 run/jump 骨骼动画）
     try {

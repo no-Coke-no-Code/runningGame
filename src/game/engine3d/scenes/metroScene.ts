@@ -850,10 +850,17 @@ export function scrollMetro(ctx: SceneContext, move: number, active: boolean) {
 export class MetroScene implements SceneContext {
   // ---------- 共享依赖（由 ThreeRunner 注入） ----------
   readonly scene: THREE.Scene;
+  /** 地铁场景不分块：容器直接就是 scene（接口要求） */
+  get chunkRoot(): THREE.Object3D {
+    return this.scene;
+  }
   readonly theme: SceneContext["theme"];
   readonly loadWallTexture: SceneContext["loadWallTexture"];
   readonly loadRoadTexture: SceneContext["loadRoadTexture"];
   readonly sidewalkTex: THREE.CanvasTexture;
+  // 主人行道 / 路缘石材质：地铁场景用不到，仅用于满足 SceneContext
+  readonly sidewalkMat: THREE.MeshStandardMaterial;
+  readonly curbMat: THREE.MeshStandardMaterial;
   readonly metroWallTex: THREE.Texture;
   readonly isStreetActive: () => boolean;
   /** 模型池访问器（每次返回最新值，避免持有构造时的过期快照） */
@@ -913,6 +920,8 @@ export class MetroScene implements SceneContext {
     this.loadWallTexture = deps.loadWallTexture;
     this.loadRoadTexture = deps.loadRoadTexture;
     this.sidewalkTex = deps.sidewalkTex;
+    this.sidewalkMat = deps.sidewalkMat;
+    this.curbMat = deps.curbMat;
     this.metroWallTex = deps.metroWallTex;
     this.modelsRef = deps.models;
     this.isStreetActive = deps.isStreetActive;
